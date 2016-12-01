@@ -10,6 +10,8 @@ import time
 from collections import Counter,defaultdict
 from random import sample
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn import preprocessing
+import numpy as np
 
 start=time.time()
 
@@ -117,29 +119,107 @@ def calculateFScore(Y_actual,Y_predicted):
         fscore.append(2 * ((precision*recall)/(precision+recall)))
     return((fscore,precision,recall))
 
+def fit_estimators(tupleofestimators):
+    start=time.time()
+    estimator,trainX,trainY=tupleofestimators
+    rt=[estimator.fit(trainX,trainY)]
+    print(estimator,(time.time()-start)/60)
+    return(rt)
+
+def predict(tupleofestimators):
+
+    estimator,predict=tupleofestimators
+    return(estimator.predict_log_proba(predict))
+
 if __name__ == "__main__":
 
     CPU_COUNT=getCPUCount(0.75)
-    filenames=splitListByPool(filterFiles(".","json"),CPU_COUNT)
+    filenames=splitListByPool(filterFiles(".","json")[:5],CPU_COUNT)
     combinedFileReads=[]
     with Pool(CPU_COUNT) as pl :
         combinedFileReads=reduce(lambda x,y: x+y,pl.map(buildReadPipleine,filenames))
     print("Stemming Operation took",(time.time()-start)/60)
 
     start=time.time()
-    X=[]
-    Y=[]
-    trainpool=splitListByPool(combinedFileReads,CPU_COUNT)
-    with Pool(CPU_COUNT) as pl:
-        X,Y=reduce(lambda x,y: tupleAdd(x,y),pl.map(unpackCategories,trainpool))
-    print("Unpacking Categories took",(time.time()-start)/60)
-    print("# of Rows",len(X))
+    whole_X=[]
+    whole_Y=[]
+    vocabulary=set()
+    locationDict=defaultdict(list)
+    for i in range(len(combinedFileReads)):
+        whole_X.append(combinedFileReads[i][1])
+        whole_Y.append(combinedFileReads[i][0])
+        locationDict["".join(set(combinedFileReads[i][0]))].append(i)
+        for item in combinedFileReads[i][0]:
+            if item not in vocabulary:
+                vocabulary=vocabulary.union([item])
 
+    rlookup = dict(zip(range(len(vocabulary)),list(vocabulary)))
+    lookup = dict(zip(list(vocabulary),range(len(vocabulary))))
+
+    #Stratified Test Train Split
+    X_test=[]
+    X_Y_train=[]
+    X_validation=[]
+    Y_test=[]
+    Y_validation=[]
+    for key in locationDict.keys():
+        test_index=set(sample(locationDict[key],floor(len(locationDict[key])*0.2)))
+        trn_val_index=[i for i in locationDict[key] if i not in test_index]
+        validation_index=set(sample(trn_val_index,floor(len(trn_val_index)*0.1)))
+        for index in locationDict[key]:
+            if index in test_index:
+                X_test.append(whole_X[index])
+                Y_test.append(list(map(lambda x: lookup[x],whole_Y[index])))
+            elif index in validation_index:
+                X_validation.append(whole_X[index])
+                Y_validation.append(list(map(lambda x: lookup[x],whole_Y[index])))
+            else:
+                X_Y_train.append([list(map(lambda x: lookup[x],whole_Y[index])),whole_X[index]])
+
+    print("Data Split took",(time.time()-start)/60)
+    print("Test,Train,Validation length",(len(X_test),len(X_Y_train),len(Y_test)))
 
 
     start=time.time()
+    X_train=[]
+    Y_train=[]
+    trainpool=splitListByPool(X_Y_train,CPU_COUNT)
+    with Pool(CPU_COUNT) as pl:
+        X_train,Y_train=reduce(lambda x,y: tupleAdd(x,y),pl.map(unpackCategories,trainpool))
+    print("Unpacking Categories took",(time.time()-start)/60)
+    print("# of Rows",len(X_train))
 
-    vectorizer = TfidfVectorizer(ngram_range=(1, 3),min_df=20,sublinear_tf=True)
-    X_test=vectorizer.fit_transform(X)
+    start=time.time()
+
+    vectorizer = TfidfVectorizer(min_df=20,sublinear_tf=True)
+    Xvec_train=vectorizer.fit_transform(X_train)
+    Xvec_test=vectorizer.transform(X_test)
+    Xvex_validation=vectorizer.transform(X_validation)
     print("Vectorizing Model took",(time.time()-start)/60)
-    print("Shape",X_test.shape)
+
+    #Models
+    from sklearn.naive_bayes import GaussianNB,MultinomialNB
+    from sklearn.ensemble import VotingClassifier,ExtraTreesClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.svm import SVC
+
+    gnb = MultinomialNB()
+    lr = LogisticRegression(n_jobs=-1)
+    et = ExtraTreesClassifier(n_estimators=1000,n_jobs=-1,max_features='log2')
+    svm = SVC(probability=True)
+
+    start=time.time()
+    models=[]
+    with Pool(CPU_COUNT) as pl:
+        models=reduce(lambda x,y: x+y,pl.map(fit_estimators,[(gnb,Xvec_train,Y_train),(et,Xvec_train,Y_train)]))
+    print("Model Training",(time.time()-start)/60)
+
+    log_probabilities=[0]
+
+    start=time.time()
+    with Pool(CPU_COUNT) as pl:
+        log_probabilities=reduce(lambda x,y: np.add(x,y),pl.map(predict,list(zip(models,[Xvec_train for i in range(len(models))]))))
+    print("Model predict",(time.time()-start)/60)
+
+    print(models[0].score(Xvex_validation,Y_validation))
+    print(models[1].score(Xvex_validation,Y_validation))
