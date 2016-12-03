@@ -177,7 +177,8 @@ if __name__ == "__main__":
 
     #Stratified Test Train Split
     X_test=[]
-    X_Y_train=[]
+    X_train=[]
+    Y_train=[]
     X_validation=[]
     Y_test=[]
     Y_validation=[]
@@ -193,24 +194,16 @@ if __name__ == "__main__":
                 X_validation.append(whole_X[index])
                 Y_validation.append(list(map(lambda x: lookup[x],whole_Y[index])))
             else:
-                X_Y_train.append([list(map(lambda x: lookup[x],whole_Y[index])),whole_X[index]])
+                X_train.append(whole_X[index])
+                Y_train.append(list(map(lambda x: lookup[x],whole_Y[index])))
 
     print("Data Split took",(time.time()-start)/60)
-    print("Test,Train,Validation length",(len(X_test),len(X_Y_train),len(Y_test)))
+    print("Test,Train,Validation length",(len(X_test),len(X_train),len(Y_test)))
 
 
     start=time.time()
-    X_train=[]
-    Y_train=[]
-    trainpool=splitListByPool(X_Y_train,CPU_COUNT)
-    with Pool(CPU_COUNT) as pl:
-        X_train,Y_train=reduce(lambda x,y: tupleAdd(x,y),pl.map(unpackCategories,trainpool))
-    print("Unpacking Categories took",(time.time()-start)/60)
-    print("# of Rows",len(X_train))
 
-    start=time.time()
-
-    vectorizer = TfidfVectorizer(min_df=20,sublinear_tf=True,ngram_range=(1, 1))
+    vectorizer = TfidfVectorizer(min_df=20,sublinear_tf=True)
     Xvec_train=vectorizer.fit_transform(X_train)
     Xvec_test=vectorizer.transform(X_test)
     Xvec_validation=vectorizer.transform(X_validation)
@@ -222,79 +215,71 @@ if __name__ == "__main__":
     from sklearn.linear_model import LogisticRegression
     from sklearn.svm import SVC
     from sklearn.neighbors import LSHForest
-    from sklearn.metrics import f1_score
+    
 
     gnb = MultinomialNB()
+    lshf = LSHForest(n_estimators=10,n_candidates=100,random_state=42)
 
     # lr = LogisticRegression(n_jobs=-1)
     # et = ExtraTreesClassifier(n_estimators=1000,n_jobs=-1,max_features='log2')
     # svm = SVC(probability=True)
 
     start=time.time()
-    models=[]
-    models=models+fit_estimators((gnb,Xvec_train,Y_train))
-    # with Pool(CPU_COUNT) as pl:
-    #     models=reduce(lambda x,y: x+y,pl.map(fit_estimators,[(gnb,Xvec_train,Y_train)]))
-    #     #,(et,Xvec_train,Y_train)]))
-    # print("Model Training",(time.time()-start)/60)
+    model=lshf.fit(Xvec_train)
+    print("Model Training",(time.time()-start)/60)
 
-    log_probabilities=[0]
+    
+    resultset=[]
+    k=[]
+    f_score=[]
+    vrec=[]
+    vacc=[]
+    for i in range(1,5):
+        start=time.time()
+        print("Current Iteration k",i)
+        modelset=[]
+        distances,indices=lshf.kneighbors(Xvec_validation,n_neighbors=i)
+        print("Current Iteration k time",(time.time()-start)/60)
+        # print(indices)
+        for row in indices:
+            # print(row)
+            rowset=[]
+            for item in row:
+                rowset=rowset+Y_train[item]
+            modelset.append(list(set(rowset)))
+        metrics=(calculateFScore(Y_validation,modelset),i)
+        k.append(i)
+        vrec.append(metrics[0][2])
+        vacc.append(metrics[0][1])
+        f_score.append(metrics[0][0])
+        resultset.append(metrics)
 
-    log_probabilities=predict((models[0],Xvec_validation))
+    resultset=sorted(resultset,key=lambda x: x[0][0],reverse=True)
+    print(resultset)
+    print(f_score,k)
 
-    # start=time.time()
-    # with Pool(CPU_COUNT) as pl:
-    #     log_probabilities=reduce(lambda x,y: np.add(x,y),pl.map(predict,list(zip(models,[Xvec_validation for i in range(len(models))]))))
-    # print("Model predict : Validation",(time.time()-start)/60)
 
-    start=time.time()
-    results=[]
-    pltFscores=[]
-    pltPrecision=[]
-    pltRecall=[]
-    pltlogProbs=[]
-    for i in np.arange(-5,0,0.25):
-        Y_pred=log_proba_filter(log_probabilities,i)
-        vfsc,vprec,vrec=calculateFScore(Y_validation,Y_pred)
-        results.append(((vfsc,vprec,vrec),i))
-        pltFscores.append(vfsc)
-        pltlogProbs.append(i)
-        pltRecall.append(vrec)
-        pltPrecision.append(vprec)
-
-    plt.plot(pltlogProbs,pltFscores,'-o')
-    plt.xlabel("Log Probability threshold")
+    plt.plot(k,f_score,'-o')
+    plt.plot(k,vacc,'-o')
+    plt.plot(k,vrec,'-o')
+    plt.xlabel("k-Neighbors")
     plt.ylabel("F-score")
-    plt.title("Validation : Log Probability threshold vs Fscore")
+    plt.title("Validation : k-Score vs F-score")
     plt.grid(True)
-    plt.savefig("uni_fscore_log_proba.png")
-
-    plt.plot(pltlogProbs,pltPrecision,'-o')
-    plt.xlabel("Log Probability threshold")
-    plt.ylabel("Precision")
-    plt.title("Validation : Log Probability threshold vs Precision")
-    plt.grid(True)
-    plt.savefig("uni_prec_log_proba.png")
-
-    plt.plot(pltlogProbs,pltRecall,'-o')
-    plt.xlabel("Log Probability threshold")
-    plt.ylabel("Recall")
-    plt.title("Validation : Log Probability threshold vs Recall")
-    plt.grid(True)
-    plt.savefig("uni_fscore_log_proba.png")
+    plt.savefig("k_fscore_k.png")
 
     print("Validation Results - Grid Search")
-    results=sorted(results,key=lambda x: x[0][0],reverse=True)
 
     print("----------------")
     print("Test Results")
 
-    log_probabilities=[0]
-
-    start=time.time()
-    log_probabilities=predict((models[0],Xvec_test))
-    # with Pool(CPU_COUNT) as pl:
-    #     log_probabilities=reduce(lambda x,y: np.add(x,y),pl.map(predict,list(zip(models,[Xvec_test for i in range(len(models))]))))
-    # print("Model predict: Test (",(time.time()-start)/60,") s")
-    Y_pred=log_proba_filter(log_probabilities,results[0][1])
-    print("Test F-Score,Precision,Recall,threshold",calculateFScore(Y_test,Y_pred),results[0][1])
+    modelset=[]
+    distances,indices=lshf.kneighbors(Xvec_test,n_neighbors=resultset[0][1])
+    for row in indices:
+        rowset=[]
+        for item in row:
+            rowset=rowset+Y_train[item]
+        modelset.append(list(set(rowset)))
+    metrics=(calculateFScore(Y_test,modelset),i)
+    print("F-Score,accuracy,metrics,i",metrics,i)
+    

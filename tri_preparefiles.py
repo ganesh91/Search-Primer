@@ -210,7 +210,7 @@ if __name__ == "__main__":
 
     start=time.time()
 
-    vectorizer = TfidfVectorizer(min_df=20,sublinear_tf=True,ngram_range=(1, 1))
+    vectorizer = TfidfVectorizer(min_df=20,sublinear_tf=True,ngram_range=(1, 3))
     Xvec_train=vectorizer.fit_transform(X_train)
     Xvec_test=vectorizer.transform(X_test)
     Xvec_validation=vectorizer.transform(X_validation)
@@ -267,21 +267,21 @@ if __name__ == "__main__":
     plt.ylabel("F-score")
     plt.title("Validation : Log Probability threshold vs Fscore")
     plt.grid(True)
-    plt.savefig("uni_fscore_log_proba.png")
+    plt.savefig("tri_fscore_log_proba.png")
 
     plt.plot(pltlogProbs,pltPrecision,'-o')
     plt.xlabel("Log Probability threshold")
     plt.ylabel("Precision")
     plt.title("Validation : Log Probability threshold vs Precision")
     plt.grid(True)
-    plt.savefig("uni_prec_log_proba.png")
+    plt.savefig("tri_prec_log_proba.png")
 
     plt.plot(pltlogProbs,pltRecall,'-o')
     plt.xlabel("Log Probability threshold")
     plt.ylabel("Recall")
     plt.title("Validation : Log Probability threshold vs Recall")
     plt.grid(True)
-    plt.savefig("uni_fscore_log_proba.png")
+    plt.savefig("tri_fscore_log_proba.png")
 
     print("Validation Results - Grid Search")
     results=sorted(results,key=lambda x: x[0][0],reverse=True)
